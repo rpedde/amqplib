@@ -17,6 +17,7 @@ const (
 type PublisherConnInfo struct {
 	Url                string
 	Exchange           string
+	ExchangeType       string
 	ExchangeDurable    bool
 	ExchangeAutoDelete bool
 	RoutingKey         string
@@ -34,13 +35,14 @@ func NewPublisherConnInfo(publisherType PublisherType) PublisherConnInfo {
 		// Durable exchange, transient unique receive queues
 		pci.ExchangeDurable = true
 		pci.ExchangeAutoDelete = false
+		pci.ExchangeType = "fanout"
 	}
 
 	return pci
 }
 
-func createFanoutExchange(pci PublisherConnInfo) (Session, error) {
-	conn, err := amqp.Dial(pci.Url)
+func PublisherSession(conninfo PublisherConnInfo) (Session, error) {
+	conn, err := amqp.Dial(conninfo.Url)
 
 	if err != nil {
 		return Session{}, err
@@ -54,10 +56,10 @@ func createFanoutExchange(pci PublisherConnInfo) (Session, error) {
 	}
 
 	if err := ch.ExchangeDeclare(
-		pci.Exchange,           // exchange
-		"fanout",               // kind
-		pci.ExchangeDurable,    // durable
-		pci.ExchangeAutoDelete, // autodelete
+		conninfo.Exchange,           // exchange
+		conninfo.ExchangeType,       // kind
+		conninfo.ExchangeDurable,    // durable
+		conninfo.ExchangeAutoDelete, // autodelete
 		false, // internal
 		false, // nowait
 		nil,   // args
@@ -67,21 +69,6 @@ func createFanoutExchange(pci PublisherConnInfo) (Session, error) {
 	}
 
 	return Session{conn, ch}, nil
-}
-
-func PublisherSession(conninfo PublisherConnInfo) (Session, error) {
-	var session = Session{}
-	var err error
-
-	switch conninfo.Type {
-	case PubSubPublisher:
-		session, err = createFanoutExchange(conninfo)
-	default:
-		session = Session{}
-		err = nil
-	}
-
-	return session, err
 }
 
 func PublisherSessionChannel(ctx context.Context, conninfo PublisherConnInfo) chan chan Session {

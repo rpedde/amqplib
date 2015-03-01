@@ -44,8 +44,9 @@ func NewReceiverConnInfo(receiverType ReceiverType) ReceiverConnInfo {
 	if receiverType == PubSubReceiver {
 		// Durable exchange, transient unique receive queues
 		rci.Queue = ""
-		ExchangeDurable = true
-		ExchangeAutoDelete = false
+		rci.ExchangeDurable = true
+		rci.ExchangeAutoDelete = false
+		rci.ExchangeType = "fanout"
 	}
 
 	return rci
