@@ -85,11 +85,17 @@ func Publish(conninfo PublisherConnInfo, sessions chan chan Session) {
 		running   bool
 		reading   = conninfo.MsgChannel
 		pending   = make(chan Message, 1)
-		ack, nack = make(chan uint64), make(chan uint64)
+		ack, nack chan uint64
+		pubIndex  uint64
 	)
 
-	for session := range sessions {
+	for {
+		pubIndex = 0
+		log.Printf("Fetching new publish session")
+		session := <-sessions
 		pub := <-session
+
+		ack, nack = make(chan uint64), make(chan uint64)
 
 		// publisher confirms for this channel/connection
 		if err := pub.Confirm(false); err != nil {
@@ -101,15 +107,44 @@ func Publish(conninfo PublisherConnInfo, sessions chan chan Session) {
 
 		log.Printf("publishing...")
 
+	outer:
 		for {
 			var body Message
+
 			select {
-			case <-ack:
-				reading = conninfo.MsgChannel
+			case id := <-ack:
+				if id == 0 {
+					// suspect server side problem
+					pub.Channel.Close()
+					pub.Connection.Close()
+					log.Printf("Suspicous ack.  Reconnecting")
+					break outer
+				}
+
+				log.Printf("ack message %d", id)
+
+				if id == pubIndex {
+					reading = conninfo.MsgChannel
+				} else {
+					log.Printf("gratuitous ack")
+				}
 
 			case id := <-nack:
-				log.Printf("nack message %d, body: %q", id, string(body))
-				reading = conninfo.MsgChannel
+				if id == 0 {
+					// suspect server side problem
+					pub.Channel.Close()
+					pub.Connection.Close()
+					log.Printf("Suspicous ack.  Reconnecting")
+					break outer
+				}
+
+				if id == pubIndex {
+					log.Printf("Re-sending message %s", body)
+					pending <- body
+				} else {
+					log.Printf("gratuitous nack")
+				}
+				// reading = conninfo.MsgChannel
 
 			case body = <-pending:
 				err := pub.Publish(
@@ -124,9 +159,13 @@ func Publish(conninfo PublisherConnInfo, sessions chan chan Session) {
 				// Retry failed delivery on the next session
 				if err != nil {
 					pending <- body
+					pub.Channel.Close()
 					pub.Connection.Close()
-					break
+					break outer
 				}
+
+				pubIndex++
+				log.Printf("Sent message as %d", pubIndex)
 
 			case body, running = <-reading:
 				// all messages consumed
@@ -147,6 +186,5 @@ func PublishLoop(conninfo PublisherConnInfo) {
 		Publish(conninfo, PublisherSessionChannel(ctx, conninfo))
 		done()
 	}()
-
 	<-ctx.Done()
 }

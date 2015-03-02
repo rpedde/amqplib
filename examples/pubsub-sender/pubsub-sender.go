@@ -2,7 +2,6 @@ package main
 
 import (
 	"flag"
-	"log"
 	"time"
 
 	"github.com/rpedde/amqplib"
@@ -14,7 +13,6 @@ func send(what string, howlong int) <-chan amqplib.Message {
 		for {
 			defer close(lines)
 			lines <- amqplib.Message(what)
-			log.Println("Sent...")
 			time.Sleep(time.Duration(howlong) * time.Second)
 		}
 	}()

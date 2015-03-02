@@ -116,25 +116,27 @@ func Receive(conninfo ReceiverConnInfo, sessions chan chan Session) {
 	for session := range sessions {
 		recv := <-session
 
-		deliveries, err := recv.Consume(
-			conninfo.Queue,       // queue name
-			conninfo.ConsumerTag, // consumer tag
-			false,                // noack
-			false,                // exclusive
-			false,                // nolocal
-			false,                // nowait
-			nil,                  //arguments
-		)
+		for {
+			deliveries, err := recv.Consume(
+				conninfo.Queue,       // queue name
+				conninfo.ConsumerTag, // consumer tag
+				false,                // noack
+				false,                // exclusive
+				false,                // nolocal
+				false,                // nowait
+				nil,                  //arguments
+			)
 
-		// If we error, then just grab a new session and try and reconsume
-		if err != nil {
-			log.Println("Error in Consume: %s", err)
-			continue
-		}
+			// If we error, then just grab a new session and try and reconsume
+			if err != nil {
+				log.Println("Error in Consume: %s", err)
+				break
+			}
 
-		for d := range deliveries {
-			conninfo.MsgChannel <- d.Body
-			d.Ack(true)
+			for d := range deliveries {
+				conninfo.MsgChannel <- d.Body
+				d.Ack(true)
+			}
 		}
 	}
 }

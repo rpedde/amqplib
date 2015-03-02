@@ -2,6 +2,7 @@ package amqplib
 
 import (
 	"log"
+	"time"
 
 	"github.com/streadway/amqp"
 	"golang.org/x/net/context"
@@ -17,7 +18,13 @@ type Session struct {
 func SessionChannel(ctx context.Context, sessionFactory func() (Session, error)) chan chan Session {
 	sessions := make(chan chan Session)
 
+	var firstCreate = true
+	var maxInterval = time.Duration(time.Second * 300)
+
 	go func() {
+		var session Session
+		var err error
+
 		sess := make(chan Session)
 		defer close(sessions)
 
@@ -29,11 +36,31 @@ func SessionChannel(ctx context.Context, sessionFactory func() (Session, error))
 				return
 			}
 
-			session, err := sessionFactory()
-			if err != nil {
-				// we should do slow retries here
-				log.Fatalf("Error creating session: %v", err)
+			retryInterval, _ := time.ParseDuration("5s")
+
+			for {
+				session, err = sessionFactory()
+
+				if err != nil {
+					// we should do slow retries here
+					if firstCreate {
+						log.Fatalf("Error creating session: %v", err)
+					}
+
+					// wait a while.
+					log.Printf("Error connecting.  Sleeping %s", retryInterval)
+
+					time.Sleep(retryInterval)
+					retryInterval = (time.Duration(retryInterval * 2))
+					if retryInterval > maxInterval {
+						retryInterval = maxInterval
+					}
+				} else {
+					break
+				}
 			}
+
+			firstCreate = false
 
 			select {
 			case sess <- session:
