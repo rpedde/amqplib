@@ -87,6 +87,7 @@ func Publish(conninfo PublisherConnInfo, sessions chan chan Session) {
 		pending   = make(chan Message, 1)
 		ack, nack chan uint64
 		pubIndex  uint64
+		body      Message
 	)
 
 	for {
@@ -105,46 +106,43 @@ func Publish(conninfo PublisherConnInfo, sessions chan chan Session) {
 			pub.NotifyConfirm(ack, nack)
 		}
 
-		log.Printf("publishing...")
+		log.Printf("Starting publish loop")
 
 	outer:
 		for {
-			var body Message
-
 			select {
-			case id := <-ack:
-				if id == 0 {
-					// suspect server side problem
-					pub.Channel.Close()
-					pub.Connection.Close()
-					log.Printf("Suspicous ack.  Reconnecting")
+			case id, running := <-ack:
+				if !running {
+					if reading == nil {
+						pending <- body
+					}
 					break outer
 				}
-
-				log.Printf("ack message %d", id)
 
 				if id == pubIndex {
 					reading = conninfo.MsgChannel
 				} else {
+					// Maybe we've come de-synced from server?
 					log.Printf("gratuitous ack")
 				}
 
-			case id := <-nack:
-				if id == 0 {
-					// suspect server side problem
-					pub.Channel.Close()
-					pub.Connection.Close()
-					log.Printf("Suspicous ack.  Reconnecting")
+			case id, running := <-nack:
+				if !running {
+					if reading == nil {
+						log.Printf("Re-queuing lost message")
+						pending <- body
+					}
 					break outer
 				}
 
 				if id == pubIndex {
 					log.Printf("Re-sending message %s", body)
 					pending <- body
+					reading = nil
 				} else {
+					// This might want a recycle
 					log.Printf("gratuitous nack")
 				}
-				// reading = conninfo.MsgChannel
 
 			case body = <-pending:
 				err := pub.Publish(
@@ -159,13 +157,11 @@ func Publish(conninfo PublisherConnInfo, sessions chan chan Session) {
 				// Retry failed delivery on the next session
 				if err != nil {
 					pending <- body
-					pub.Channel.Close()
-					pub.Connection.Close()
+					reading = nil
 					break outer
 				}
 
 				pubIndex++
-				log.Printf("Sent message as %d", pubIndex)
 
 			case body, running = <-reading:
 				// all messages consumed
@@ -177,6 +173,10 @@ func Publish(conninfo PublisherConnInfo, sessions chan chan Session) {
 				reading = nil
 			}
 		}
+
+		log.Printf("Recycling connection")
+		pub.Channel.Close()
+		pub.Connection.Close()
 	}
 }
 
