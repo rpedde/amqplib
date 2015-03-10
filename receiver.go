@@ -13,6 +13,8 @@ type ReceiverType int
 const (
 	WorkItemReceiver ReceiverType = iota
 	PubSubReceiver
+
+	DefaultReceiver
 )
 
 type ReceiverConnInfo struct {
@@ -27,7 +29,8 @@ type ReceiverConnInfo struct {
 	QueueExclusive     bool
 	BindingKey         string
 	ConsumerTag        string
-	MsgChannel         chan<- Message
+	Callback           func(Message) bool
+	AutoAck            bool
 }
 
 func NewReceiverConnInfo(receiverType ReceiverType) ReceiverConnInfo {
@@ -37,6 +40,7 @@ func NewReceiverConnInfo(receiverType ReceiverType) ReceiverConnInfo {
 		QueueDurable:       false,
 		QueueAutoDelete:    true,
 		QueueExclusive:     false,
+		AutoAck:            true,
 		ConsumerTag:        "default",
 		BindingKey:         "",
 	}
@@ -49,6 +53,31 @@ func NewReceiverConnInfo(receiverType ReceiverType) ReceiverConnInfo {
 		rci.ExchangeType = "fanout"
 	}
 
+	if receiverType == WorkItemReceiver {
+		// Durable exchange, durable recieve queue, with confirm
+		rci.ExchangeDurable = true
+		rci.ExchangeAutoDelete = false
+		rci.QueueDurable = true
+		rci.QueueAutoDelete = false
+		rci.AutoAck = false
+		rci.ExchangeType = "fanout"
+	}
+
+	return rci
+}
+
+func NewPubSubReceiver(exchange string) ReceiverConnInfo {
+	rci := NewReceiverConnInfo(PubSubReceiver)
+
+	rci.Exchange = exchange
+	return rci
+}
+
+func NewWorkItemReceiver(exchange string, queue string) ReceiverConnInfo {
+	rci := NewReceiverConnInfo(WorkItemReceiver)
+
+	rci.Exchange = exchange
+	rci.Queue = queue
 	return rci
 }
 
@@ -112,6 +141,35 @@ func ConsumerSessionChannel(ctx context.Context, conninfo ReceiverConnInfo) chan
 	return SessionChannel(ctx, sessionFactory)
 }
 
+func singleReceiver(conninfo ReceiverConnInfo) chan<- amqp.Delivery {
+	messages := make(chan amqp.Delivery)
+	go func() {
+		for {
+			defer close(messages)
+			message := <-messages
+			result := safeCallback(conninfo.Callback, message.Body)
+			if result || conninfo.AutoAck {
+				message.Ack(false)
+			} else {
+				message.Nack(false, true)
+			}
+		}
+	}()
+
+	return messages
+}
+
+func safeCallback(fn func(Message) bool, msg Message) (result bool) {
+	defer func() {
+		if e := recover(); e != nil {
+			// should log a panic here
+			result = false
+		}
+	}()
+
+	return fn(msg)
+}
+
 func Receive(conninfo ReceiverConnInfo, sessions chan chan Session) {
 	for session := range sessions {
 		recv := <-session
@@ -133,8 +191,10 @@ func Receive(conninfo ReceiverConnInfo, sessions chan chan Session) {
 				break
 			}
 
+			msg_channel := singleReceiver(conninfo)
+
 			for d := range deliveries {
-				conninfo.MsgChannel <- d.Body
+				msg_channel <- d
 				d.Ack(true)
 			}
 		}

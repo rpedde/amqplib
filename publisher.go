@@ -12,6 +12,8 @@ type PublisherType int
 const (
 	WorkItemPublisher PublisherType = iota
 	PubSubPublisher
+
+	DefaultPublisher
 )
 
 type PublisherConnInfo struct {
@@ -20,6 +22,7 @@ type PublisherConnInfo struct {
 	ExchangeType       string
 	ExchangeDurable    bool
 	ExchangeAutoDelete bool
+	Confirms           bool
 	RoutingKey         string
 	MsgChannel         <-chan Message
 }
@@ -28,6 +31,7 @@ func NewPublisherConnInfo(publisherType PublisherType) PublisherConnInfo {
 	pci := PublisherConnInfo{
 		ExchangeDurable:    false,
 		ExchangeAutoDelete: true,
+		Confirms:           false,
 		RoutingKey:         "",
 	}
 
@@ -38,6 +42,28 @@ func NewPublisherConnInfo(publisherType PublisherType) PublisherConnInfo {
 		pci.ExchangeType = "fanout"
 	}
 
+	if publisherType == WorkItemPublisher {
+		// Durable exchange, durable receive queues, with confirm
+		pci.ExchangeDurable = true
+		pci.ExchangeAutoDelete = false
+		pci.ExchangeType = "fanout"
+		pci.Confirms = true
+	}
+
+	return pci
+}
+
+func NewPubSubPublisher(exchange string) PublisherConnInfo {
+	pci := NewPublisherConnInfo(PubSubPublisher)
+
+	pci.Exchange = exchange
+	return pci
+}
+
+func NewWorkItemPublisher(exchange string) PublisherConnInfo {
+	pci := NewPublisherConnInfo(WorkItemPublisher)
+
+	pci.Exchange = exchange
 	return pci
 }
 
@@ -99,8 +125,8 @@ func Publish(conninfo PublisherConnInfo, sessions chan chan Session) {
 		ack, nack = make(chan uint64), make(chan uint64)
 
 		// publisher confirms for this channel/connection
-		if err := pub.Confirm(false); err != nil {
-			log.Printf("publisher confirms not supported")
+		if err := pub.Confirm(false); err != nil || !conninfo.Confirms {
+			log.Printf("disabling publisher confirms...")
 			close(ack) // confirms not supported, simulate by always acking
 		} else {
 			pub.NotifyConfirm(ack, nack)
