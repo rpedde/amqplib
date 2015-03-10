@@ -33,7 +33,7 @@ func main() {
 	flag.StringVar(&ci.Url, "url", "amqp:///", "AMQP url")
 	flag.Parse()
 
-	ci.MsgChannel = send("job", 5)
+	ci.MsgChannel = send("job", 1)
 
 	amqplib.PublishLoop(ci)
 }

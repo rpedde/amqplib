@@ -3,6 +3,7 @@ package amqplib
 import (
 	"fmt"
 	"log"
+	"reflect"
 
 	"github.com/streadway/amqp"
 	"golang.org/x/net/context"
@@ -31,6 +32,7 @@ type ReceiverConnInfo struct {
 	ConsumerTag        string
 	Callback           func(Message) bool
 	AutoAck            bool
+	Receivers          int
 }
 
 func NewReceiverConnInfo(receiverType ReceiverType) ReceiverConnInfo {
@@ -43,6 +45,7 @@ func NewReceiverConnInfo(receiverType ReceiverType) ReceiverConnInfo {
 		AutoAck:            true,
 		ConsumerTag:        "default",
 		BindingKey:         "",
+		Receivers:          1,
 	}
 
 	if receiverType == PubSubReceiver {
@@ -141,9 +144,41 @@ func ConsumerSessionChannel(ctx context.Context, conninfo ReceiverConnInfo) chan
 	return SessionChannel(ctx, sessionFactory)
 }
 
+func multiReceiver(conninfo ReceiverConnInfo) chan<- amqp.Delivery {
+	chans := make([]chan<- amqp.Delivery, conninfo.Receivers)
+	cases := make([]reflect.SelectCase, conninfo.Receivers)
+	messages := make(chan amqp.Delivery)
+
+	go func() {
+		defer close(messages)
+
+		for i := 0; i < conninfo.Receivers; i++ {
+			log.Printf("Creating worker %d", i)
+			chans[i] = singleReceiver(conninfo)
+			cases[i].Dir = reflect.SelectSend
+			cases[i].Chan = reflect.ValueOf(chans[i])
+		}
+
+		for {
+			message := <-messages
+			// log.Printf("got message... dispatching")
+			for i := range cases {
+				cases[i].Send = reflect.ValueOf(message)
+			}
+
+			reflect.Select(cases)
+			// chosen, _, _ := reflect.Select(cases)
+			// log.Printf("dispatched to worker %d", chosen)
+		}
+	}()
+
+	return messages
+}
+
 func singleReceiver(conninfo ReceiverConnInfo) chan<- amqp.Delivery {
 	messages := make(chan amqp.Delivery)
 	go func() {
+		log.Printf("worker started")
 		for {
 			defer close(messages)
 			message := <-messages
@@ -191,11 +226,10 @@ func Receive(conninfo ReceiverConnInfo, sessions chan chan Session) {
 				break
 			}
 
-			msg_channel := singleReceiver(conninfo)
+			msg_channel := multiReceiver(conninfo)
 
 			for d := range deliveries {
 				msg_channel <- d
-				d.Ack(true)
 			}
 		}
 	}

@@ -2,7 +2,7 @@ package main
 
 import (
 	"flag"
-	"fmt"
+	"log"
 	"math/rand"
 	"time"
 
@@ -10,19 +10,12 @@ import (
 )
 
 func recv(message amqplib.Message) bool {
-	fmt.Printf("Got message: %s... ", message)
-	num := rand.Intn(3)
+	num := rand.Intn(3) + 1
 
-	if num == 0 {
-		fmt.Printf("panic\n")
-		panic("oh noes!")
-	} else if num == 1 {
-		fmt.Printf("failed\n")
-		return false
-	} else {
-		fmt.Printf("succeeded\n")
-		return true
-	}
+	log.Printf("got %s: sleeping %s", message, num)
+	time.Sleep(time.Duration(num) * time.Second)
+	log.Printf("finished %s", message)
+	return true
 }
 
 func main() {
@@ -34,6 +27,7 @@ func main() {
 	flag.Parse()
 
 	ci.Callback = recv
+	ci.Receivers = 3
 
 	amqplib.ReceiveLoop(ci)
 }
