@@ -138,10 +138,16 @@ func Publish(conninfo PublisherConnInfo, sessions chan chan Session) {
 		for {
 			select {
 			case id, running := <-ack:
+				if !conninfo.Confirms {
+					reading = conninfo.MsgChannel
+					break
+				}
+
 				if !running {
 					if reading == nil {
 						pending <- body
 					}
+					log.Printf("ack pipe terminated")
 					break outer
 				}
 

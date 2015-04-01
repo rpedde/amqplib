@@ -8,7 +8,7 @@ import (
 )
 
 func recv(message amqplib.Message) bool {
-	log.Printf("Got message: %s\n", message.Body)
+	log.Printf("Got message: %s\n", message)
 	return true
 }
 
